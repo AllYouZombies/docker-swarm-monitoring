@@ -1,0 +1,87 @@
+version: '3.9'
+
+
+configs:
+  prometheus.yml:
+    external: true
+
+
+x-declare:
+  STACK_NAME: ${STACK_NAME?Variable STACK_NAME is required}
+  DOMAIN: ${DOMAIN?Variable DOMAIN is required}
+
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    command: "--config.file=/etc/prometheus/prometheus.yml"
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.services.${STACK_NAME}-prometheus.loadbalancer.server.port=9090"
+        - "traefik.http.routers.${STACK_NAME}-prometheus.rule=Host(`${monitoring-prometheus.${DOMAIN}}`)"
+        - "traefik.http.routers.${STACK_NAME}-prometheus.entrypoints=https"
+        - "traefik.http.routers.${STACK_NAME}-prometheus.tls=true"
+        - "traefik.http.middlewares.${STACK_NAME}-prometheus-auth.basicauth.users=${PROMETHEUS_USERNAME}:${PROMETHEUS_PASSWORD}"
+        - "traefik.http.routers.${STACK_NAME}-prometheus.middlewares=${STACK_NAME}-prometheus-auth"
+        - "traefik.docker.network=traefik_default"
+    configs:
+      - source: prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+    networks:
+      - default
+      - traefik_default
+    privileged: true
+    restart: unless-stopped
+    user: root
+    volumes:
+      - prometheus_data:/prometheus
+      - /var/run/docker.sock:/var/run/docker.sock
+  grafana:
+    image: grafana/grafana:latest
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.services.${STACK_NAME}-grafana.loadbalancer.server.port=3000"
+        - "traefik.http.routers.${STACK_NAME}-grafana.rule=Host(`${monitoring.${DOMAIN}}`)"
+        - "traefik.http.routers.${STACK_NAME}-grafana.entrypoints=https"
+        - "traefik.http.routers.${STACK_NAME}-grafana.tls=true"
+        - "traefik.docker.network=traefik_default"
+    networks:
+      - default
+      - traefik_default
+    restart: unless-stopped
+    volumes:
+      - grafana_data:/var/lib/grafana:rw
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    command: -docker_only
+    deploy:
+      mode: global
+    devices:
+      - "/dev/kmsg:/dev/kmsg"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:latest
+    command: "--path.rootfs=/host"
+    deploy:
+      mode: global
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+
+
+networks:
+  traefik_default:
+    external: true
+
+
+volumes:
+  prometheus_data:
+  grafana_data:
